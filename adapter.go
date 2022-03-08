@@ -1,6 +1,3 @@
-//go:build !sqlite3
-// +build !sqlite3
-
 package gormadapter
 
 import (
@@ -12,11 +9,7 @@ import (
 
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 
-	//"gorm.io/driver/sqlite"
-	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/plugin/dbresolver"
@@ -252,23 +245,11 @@ func NewAdapterByDBWithCustomTable(db *gorm.DB, t interface{}, tableName ...stri
 }
 
 func openDBConnection(driverName, dataSourceName string) (*gorm.DB, error) {
-	var err error
-	var db *gorm.DB
-	if driverName == "postgres" {
-		db, err = gorm.Open(postgres.Open(dataSourceName), &gorm.Config{})
-	} else if driverName == "mysql" {
-		db, err = gorm.Open(mysql.Open(dataSourceName), &gorm.Config{})
-	} else if driverName == "sqlserver" {
-		db, err = gorm.Open(sqlserver.Open(dataSourceName), &gorm.Config{})
-		//} else if driverName == "sqlite3" {
-		//	db, err = gorm.Open(sqlite.Open(dataSourceName), &gorm.Config{})
-	} else {
-		return nil, errors.New("Database dialect '" + driverName + "' is not supported. Supported databases are postgres, mysql and sqlserver")
+	driver, ok := opens[driverName]
+	if !ok {
+		return nil, errors.New("database dialect is not supported")
 	}
-	if err != nil {
-		return nil, err
-	}
-	return db, err
+	return gorm.Open(driver(dataSourceName), &gorm.Config{})
 }
 
 func (a *Adapter) createDatabase() error {
