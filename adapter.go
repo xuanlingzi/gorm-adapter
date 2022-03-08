@@ -23,8 +23,14 @@ import (
 
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
-	"github.com/jackc/pgconn"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+
+	//"gorm.io/driver/sqlite"
+	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	"gorm.io/plugin/dbresolver"
 )
 
 const (
@@ -49,7 +55,7 @@ func (CasbinRule) TableName() string {
 }
 
 type Filter struct {
-	PType []string
+	Ptype []string
 	V0    []string
 	V1    []string
 	V2    []string
@@ -82,6 +88,24 @@ func finalizer(a *Adapter) {
 	}
 }
 
+//Select conn according to table name（use map store name-index）
+type specificPolicy int
+
+func (p *specificPolicy) Resolve(connPools []gorm.ConnPool) gorm.ConnPool {
+	return connPools[*p]
+}
+
+type DbPool struct {
+	dbMap  map[string]specificPolicy
+	policy *specificPolicy
+	source *gorm.DB
+}
+
+func (dbPool *DbPool) switchDb(dbName string) *gorm.DB {
+	*dbPool.policy = dbPool.dbMap[dbName]
+	return dbPool.source.Clauses(dbresolver.Write)
+}
+
 // NewAdapter is the constructor for Adapter.
 // Params : databaseName,tableName,dbSpecified
 //			databaseName,{tableName/dbSpecified}
@@ -102,9 +126,7 @@ func NewAdapter(driverName string, dataSourceName string, params ...interface{})
 	a.databaseName = defaultDatabaseName
 	a.dbSpecified = false
 
-	if len(params) == 0 {
-
-	} else if len(params) == 1 {
+	if len(params) == 1 {
 		switch p1 := params[0].(type) {
 		case bool:
 			a.dbSpecified = p1
@@ -140,12 +162,12 @@ func NewAdapter(driverName string, dataSourceName string, params ...interface{})
 		} else {
 			return nil, errors.New("wrong format")
 		}
-	} else {
+	} else if len(params) != 0 {
 		return nil, errors.New("too many parameters")
 	}
 
 	// Open the DB, create it if not existed.
-	err := a.open()
+	err := a.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +199,36 @@ func NewAdapterByDBUseTableName(db *gorm.DB, prefix string, tableName string) (*
 	return a, nil
 }
 
+// InitDbResolver multiple databases support
+// Example usage:
+// dbPool,err := InitDbResolver([]gorm.Dialector{mysql.Open(dsn),mysql.Open(dsn2)},[]string{"casbin1","casbin2"})
+// a := initAdapterWithGormInstanceByMulDb(t,dbPool,"casbin1","","casbin_rule1")
+// a = initAdapterWithGormInstanceByMulDb(t,dbPool,"casbin2","","casbin_rule2")/*
+func InitDbResolver(dbArr []gorm.Dialector, dbNames []string) (DbPool, error) {
+	if len(dbArr) == 0 {
+		panic("dbArr len is 0")
+	}
+	source, e := gorm.Open(dbArr[0])
+	if e != nil {
+		panic(e.Error())
+	}
+	var p specificPolicy
+	p = 0
+	err := source.Use(dbresolver.Register(dbresolver.Config{Policy: &p, Sources: dbArr}))
+	dbMap := make(map[string]specificPolicy)
+	for i := 0; i < len(dbNames); i++ {
+		dbMap[dbNames[i]] = specificPolicy(i)
+	}
+	return DbPool{dbMap: dbMap, policy: &p, source: source}, err
+}
+
+func NewAdapterByMulDb(dbPool DbPool, dbName string, prefix string, tableName string) (*Adapter, error) {
+	//change DB
+	dbPool.switchDb(dbName)
+
+	return NewAdapterByDBUseTableName(dbPool.source, prefix, tableName)
+}
+
 // NewFilteredAdapter is the constructor for FilteredAdapter.
 // Casbin will not automatically call LoadPolicy() for a filtered adapter.
 func NewFilteredAdapter(driverName string, dataSourceName string, params ...interface{}) (*Adapter, error) {
@@ -193,7 +245,7 @@ func NewAdapterByDB(db *gorm.DB) (*Adapter, error) {
 	return NewAdapterByDBUseTableName(db, "", defaultTableName)
 }
 
-func NewAdapterByDBWithCustomTable(db *gorm.DB, t interface{}) (*Adapter, error) {
+func NewAdapterByDBWithCustomTable(db *gorm.DB, t interface{}, tableName ...string) (*Adapter, error) {
 	ctx := db.Statement.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -201,13 +253,32 @@ func NewAdapterByDBWithCustomTable(db *gorm.DB, t interface{}) (*Adapter, error)
 
 	ctx = context.WithValue(ctx, customTableKey{}, t)
 
-	return NewAdapterByDBUseTableName(db.WithContext(ctx), "", defaultTableName)
+	curTableName := defaultTableName
+	if len(tableName) > 0 {
+		curTableName = tableName[0]
+	}
+
+	return NewAdapterByDBUseTableName(db.WithContext(ctx), "", curTableName)
 }
 
 func openDBConnection(driverName, dataSourceName string) (*gorm.DB, error) {
-	driver, ok := opens[driverName]
-	if !ok {
-		return nil, errors.New("database dialect is not supported")
+	var err error
+	var db *gorm.DB
+	if driverName == "postgres" {
+		db, err = gorm.Open(postgres.Open(dataSourceName), &gorm.Config{})
+	} else if driverName == "mysql" {
+		db, err = gorm.Open(mysql.Open(dataSourceName), &gorm.Config{})
+	} else if driverName == "sqlserver" {
+		db, err = gorm.Open(sqlserver.Open(dataSourceName), &gorm.Config{})
+		//} else if driverName == "sqlite3" {
+		//	db, err = gorm.Open(sqlite.Open(dataSourceName), &gorm.Config{})
+	} else {
+		return nil, errors.New("Database dialect '" + driverName + "' is not supported. Supported databases are postgres, mysql and sqlserver")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return db, err
 	}
 	return gorm.Open(driver(dataSourceName), &gorm.Config{})
 	//var err error
@@ -238,7 +309,7 @@ func (a *Adapter) createDatabase() error {
 	if a.driverName == "postgres" {
 		if err = db.Exec("CREATE DATABASE " + a.databaseName).Error; err != nil {
 			// 42P04 is	duplicate_database
-			if err.(*pgconn.PgError).Code == "42P04" {
+			if strings.Contains(fmt.Sprintf("%s", err), "42P04") {
 				return nil
 			}
 		}
@@ -251,7 +322,7 @@ func (a *Adapter) createDatabase() error {
 	return nil
 }
 
-func (a *Adapter) open() error {
+func (a *Adapter) Open() error {
 	var err error
 	var db *gorm.DB
 
@@ -280,8 +351,13 @@ func (a *Adapter) open() error {
 	return a.createTable()
 }
 
-func (a *Adapter) close() error {
-	a.db = nil
+// AddLogger adds logger to db
+func (a *Adapter) AddLogger(l logger.Interface) {
+	a.db = a.db.Session(&gorm.Session{Logger: l, Context: a.db.Statement.Context})
+}
+
+func (a *Adapter) Close() error {
+	finalizer(a)
 	return nil
 }
 
@@ -307,16 +383,17 @@ func (a *Adapter) casbinRuleTable() func(db *gorm.DB) *gorm.DB {
 func (a *Adapter) createTable() error {
 	t := a.db.Statement.Context.Value(customTableKey{})
 
-	if t == nil {
-		t = a.getTableInstance()
+	if t != nil {
+		return a.db.AutoMigrate(t)
 	}
 
+	t = a.getTableInstance()
 	if err := a.db.AutoMigrate(t); err != nil {
 		return err
 	}
 
 	tableName := a.getFullTableName()
-	index := "idx_" + tableName
+	index := strings.ReplaceAll("idx_"+tableName, ".", "_")
 	hasIndex := a.db.Migrator().HasIndex(t, index)
 	if !hasIndex {
 		if err := a.db.Exec(fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (p_type,v0,v1,v2,v3,v4,v5)", index, tableName)).Error; err != nil {
@@ -336,25 +413,18 @@ func (a *Adapter) dropTable() error {
 }
 
 func loadPolicyLine(line CasbinRule, model model.Model) {
-	var p = []string{line.PType,
-		line.V0, line.V1, line.V2, line.V3, line.V4, line.V5}
+	var p = []string{line.Ptype,
+		line.V0, line.V1, line.V2,
+		line.V3, line.V4, line.V5}
 
-	var lineText string
-	if line.V5 != "" {
-		lineText = strings.Join(p, ", ")
-	} else if line.V4 != "" {
-		lineText = strings.Join(p[:6], ", ")
-	} else if line.V3 != "" {
-		lineText = strings.Join(p[:5], ", ")
-	} else if line.V2 != "" {
-		lineText = strings.Join(p[:4], ", ")
-	} else if line.V1 != "" {
-		lineText = strings.Join(p[:3], ", ")
-	} else if line.V0 != "" {
-		lineText = strings.Join(p[:2], ", ")
+	index := len(p) - 1
+	for p[index] == "" {
+		index--
 	}
+	index += 1
+	p = p[:index]
 
-	persist.LoadPolicyLine(lineText, model)
+	persist.LoadPolicyArray(p, model)
 }
 
 // LoadPolicy loads policy from database.
@@ -400,8 +470,8 @@ func (a *Adapter) IsFiltered() bool {
 // filterQuery builds the gorm query to match the rule filter to use within a scope.
 func (a *Adapter) filterQuery(db *gorm.DB, filter Filter) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		if len(filter.PType) > 0 {
-			db = db.Where("p_type in (?)", filter.PType)
+		if len(filter.Ptype) > 0 {
+			db = db.Where("ptype in (?)", filter.Ptype)
 		}
 		if len(filter.V0) > 0 {
 			db = db.Where("v0 in (?)", filter.V0)
@@ -462,24 +532,33 @@ func (a *Adapter) SavePolicy(model model.Model) error {
 		return err
 	}
 
+	var lines []CasbinRule
+	flushEvery := 1000
 	for ptype, ast := range model["p"] {
 		for _, rule := range ast.Policy {
-			line := a.savePolicyLine(ptype, rule)
-			err := a.db.Create(&line).Error
-			if err != nil {
-				return err
+			lines = append(lines, a.savePolicyLine(ptype, rule))
+			if len(lines) > flushEvery {
+				if err := a.db.Create(&lines).Error; err != nil {
+					return err
+				}
+				lines = nil
 			}
 		}
 	}
 
 	for ptype, ast := range model["g"] {
 		for _, rule := range ast.Policy {
-			line := a.savePolicyLine(ptype, rule)
-			err := a.db.Create(&line).Error
-			if err != nil {
-				return err
+			lines = append(lines, a.savePolicyLine(ptype, rule))
+			if len(lines) > flushEvery {
+				if err := a.db.Create(&lines).Error; err != nil {
+					return err
+				}
+				lines = nil
 			}
 		}
+	}
+	if err := a.db.Create(&lines).Error; err != nil {
+		return err
 	}
 
 	return nil
@@ -501,15 +580,12 @@ func (a *Adapter) RemovePolicy(sec string, ptype string, rule []string) error {
 
 // AddPolicies adds multiple policy rules to the storage.
 func (a *Adapter) AddPolicies(sec string, ptype string, rules [][]string) error {
-	return a.db.Transaction(func(tx *gorm.DB) error {
-		for _, rule := range rules {
-			line := a.savePolicyLine(ptype, rule)
-			if err := tx.Create(&line).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	var lines []CasbinRule
+	for _, rule := range rules {
+		line := a.savePolicyLine(ptype, rule)
+		lines = append(lines, line)
+	}
+	return a.db.Create(&lines).Error
 }
 
 // RemovePolicies removes multiple policy rules from the storage.
@@ -529,7 +605,17 @@ func (a *Adapter) RemovePolicies(sec string, ptype string, rules [][]string) err
 func (a *Adapter) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int, fieldValues ...string) error {
 	line := a.getTableInstance()
 
-	line.PType = ptype
+	line.Ptype = ptype
+
+	if fieldIndex == -1 {
+		return a.rawDelete(a.db, *line)
+	}
+
+	err := checkQueryField(fieldValues)
+	if err != nil {
+		return err
+	}
+
 	if fieldIndex <= 0 && 0 < fieldIndex+len(fieldValues) {
 		line.V0 = fieldValues[0-fieldIndex]
 	}
@@ -548,8 +634,18 @@ func (a *Adapter) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int,
 	if fieldIndex <= 5 && 5 < fieldIndex+len(fieldValues) {
 		line.V5 = fieldValues[5-fieldIndex]
 	}
-	err := a.rawDelete(a.db, *line)
+	err = a.rawDelete(a.db, *line)
 	return err
+}
+
+// checkQueryfield make sure the fields won't all be empty (string --> "")
+func checkQueryField(fieldValues []string) error {
+	for _, fieldValue := range fieldValues {
+		if fieldValue != "" {
+			return nil
+		}
+	}
+	return errors.New("the query field cannot all be empty string (\"\"), please check")
 }
 
 func (a *Adapter) rawDelete(db *gorm.DB, line CasbinRule) error {
@@ -619,8 +715,140 @@ func appendWhere(line CasbinRule) (string, []interface{}) {
 // UpdatePolicy updates a new policy rule to DB.
 func (a *Adapter) UpdatePolicy(sec string, ptype string, oldRule, newPolicy []string) error {
 	oldLine := a.savePolicyLine(ptype, oldRule)
-	queryStr, queryArgs := appendWhere(oldLine)
 	newLine := a.savePolicyLine(ptype, newPolicy)
-	err := a.db.Where(queryStr, queryArgs...).Updates(newLine).Error
-	return err
+	return a.db.Model(&oldLine).Where(&oldLine).Updates(newLine).Error
+}
+
+func (a *Adapter) UpdatePolicies(sec string, ptype string, oldRules, newRules [][]string) error {
+	oldPolicies := make([]CasbinRule, 0, len(oldRules))
+	newPolicies := make([]CasbinRule, 0, len(oldRules))
+	for _, oldRule := range oldRules {
+		oldPolicies = append(oldPolicies, a.savePolicyLine(ptype, oldRule))
+	}
+	for _, newRule := range newRules {
+		newPolicies = append(newPolicies, a.savePolicyLine(ptype, newRule))
+	}
+	tx := a.db.Begin()
+	for i := range oldPolicies {
+		if err := tx.Model(&oldPolicies[i]).Where(&oldPolicies[i]).Updates(newPolicies[i]).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit().Error
+}
+
+func (a *Adapter) UpdateFilteredPolicies(sec string, ptype string, newPolicies [][]string, fieldIndex int, fieldValues ...string) ([][]string, error) {
+	// UpdateFilteredPolicies deletes old rules and adds new rules.
+	line := a.getTableInstance()
+
+	line.Ptype = ptype
+	if fieldIndex <= 0 && 0 < fieldIndex+len(fieldValues) {
+		line.V0 = fieldValues[0-fieldIndex]
+	}
+	if fieldIndex <= 1 && 1 < fieldIndex+len(fieldValues) {
+		line.V1 = fieldValues[1-fieldIndex]
+	}
+	if fieldIndex <= 2 && 2 < fieldIndex+len(fieldValues) {
+		line.V2 = fieldValues[2-fieldIndex]
+	}
+	if fieldIndex <= 3 && 3 < fieldIndex+len(fieldValues) {
+		line.V3 = fieldValues[3-fieldIndex]
+	}
+	if fieldIndex <= 4 && 4 < fieldIndex+len(fieldValues) {
+		line.V4 = fieldValues[4-fieldIndex]
+	}
+	if fieldIndex <= 5 && 5 < fieldIndex+len(fieldValues) {
+		line.V5 = fieldValues[5-fieldIndex]
+	}
+
+	newP := make([]CasbinRule, 0, len(newPolicies))
+	oldP := make([]CasbinRule, 0)
+	for _, newRule := range newPolicies {
+		newP = append(newP, a.savePolicyLine(ptype, newRule))
+	}
+
+	tx := a.db.Begin()
+
+	for i := range newP {
+		str, args := line.queryString()
+		if err := tx.Where(str, args...).Find(&oldP).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err := tx.Where(str, args...).Delete([]CasbinRule{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err := tx.Create(&newP[i]).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	// return deleted rulues
+	oldPolicies := make([][]string, 0)
+	for _, v := range oldP {
+		oldPolicy := v.toStringPolicy()
+		oldPolicies = append(oldPolicies, oldPolicy)
+	}
+	return oldPolicies, tx.Commit().Error
+}
+
+func (c *CasbinRule) queryString() (interface{}, []interface{}) {
+	queryArgs := []interface{}{c.Ptype}
+
+	queryStr := "ptype = ?"
+	if c.V0 != "" {
+		queryStr += " and v0 = ?"
+		queryArgs = append(queryArgs, c.V0)
+	}
+	if c.V1 != "" {
+		queryStr += " and v1 = ?"
+		queryArgs = append(queryArgs, c.V1)
+	}
+	if c.V2 != "" {
+		queryStr += " and v2 = ?"
+		queryArgs = append(queryArgs, c.V2)
+	}
+	if c.V3 != "" {
+		queryStr += " and v3 = ?"
+		queryArgs = append(queryArgs, c.V3)
+	}
+	if c.V4 != "" {
+		queryStr += " and v4 = ?"
+		queryArgs = append(queryArgs, c.V4)
+	}
+	if c.V5 != "" {
+		queryStr += " and v5 = ?"
+		queryArgs = append(queryArgs, c.V5)
+	}
+
+	return queryStr, queryArgs
+}
+
+func (c *CasbinRule) toStringPolicy() []string {
+	policy := make([]string, 0)
+	if c.Ptype != "" {
+		policy = append(policy, c.Ptype)
+	}
+	if c.V0 != "" {
+		policy = append(policy, c.V0)
+	}
+	if c.V1 != "" {
+		policy = append(policy, c.V1)
+	}
+	if c.V2 != "" {
+		policy = append(policy, c.V2)
+	}
+	if c.V3 != "" {
+		policy = append(policy, c.V3)
+	}
+	if c.V4 != "" {
+		policy = append(policy, c.V4)
+	}
+	if c.V5 != "" {
+		policy = append(policy, c.V5)
+	}
+	return policy
 }
