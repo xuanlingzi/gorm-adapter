@@ -15,17 +15,14 @@
 package gormadapter
 
 import (
-	"fmt"
 	"log"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/util"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -323,31 +320,31 @@ func testUpdateFilteredPolicies(t *testing.T, a *Adapter) {
 	testGetPolicyWithoutOrder(t, e, [][]string{{"alice", "data1", "write"}, {"data2_admin", "data2", "read"}, {"data2_admin", "data2", "write"}, {"bob", "data2", "read"}})
 }
 
-func TestAdapterWithCustomTable(t *testing.T) {
-	db, err := gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable"), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
-
-	if err = db.Exec("CREATE DATABASE casbin_custom_table").Error; err != nil {
-		// 42P04 is	duplicate_database
-		if !strings.Contains(fmt.Sprintf("%s", err), "42P04") {
-			panic(err)
-		}
-	}
-
-	db, err = gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable dbname=casbin_custom_table"), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
-
-	a := initAdapterWithGormInstanceAndCustomTable(t, db)
-	testAutoSave(t, a)
-	testSaveLoad(t, a)
-
-	a = initAdapterWithGormInstanceAndCustomTable(t, db)
-	testFilteredPolicy(t, a)
-}
+//func TestAdapterWithCustomTable(t *testing.T) {
+//	db, err := gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable"), &gorm.Config{})
+//	if err != nil {
+//		panic(err)
+//	}
+//
+//	if err = db.Exec("CREATE DATABASE casbin_custom_table").Error; err != nil {
+//		// 42P04 is	duplicate_database
+//		if !strings.Contains(fmt.Sprintf("%s", err), "42P04") {
+//			panic(err)
+//		}
+//	}
+//
+//	db, err = gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable dbname=casbin_custom_table"), &gorm.Config{})
+//	if err != nil {
+//		panic(err)
+//	}
+//
+//	a := initAdapterWithGormInstanceAndCustomTable(t, db)
+//	testAutoSave(t, a)
+//	testSaveLoad(t, a)
+//
+//	a = initAdapterWithGormInstanceAndCustomTable(t, db)
+//	testFilteredPolicy(t, a)
+//}
 
 func TestAdapterWithMulDb(t *testing.T) {
 	//create new database
@@ -407,9 +404,9 @@ func TestAdapters(t *testing.T) {
 	testAutoSave(t, a)
 	testSaveLoad(t, a)
 
-	a = initAdapter(t, "postgres", "user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable")
-	testAutoSave(t, a)
-	testSaveLoad(t, a)
+	//a = initAdapter(t, "postgres", "user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable")
+	//testAutoSave(t, a)
+	//testSaveLoad(t, a)
 
 	//a = initAdapter(t, "sqlite3", "casbin.db")
 	//testAutoSave(t, a)
@@ -426,13 +423,13 @@ func TestAdapters(t *testing.T) {
 	a = initAdapterWithGormInstance(t, db)
 	testFilteredPolicy(t, a)
 
-	db, err = gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable dbname=casbin"), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
-	a = initAdapterWithGormInstance(t, db)
-	testAutoSave(t, a)
-	testSaveLoad(t, a)
+	//db, err = gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable dbname=casbin"), &gorm.Config{})
+	//if err != nil {
+	//	panic(err)
+	//}
+	//a = initAdapterWithGormInstance(t, db)
+	//testAutoSave(t, a)
+	//testSaveLoad(t, a)
 
 	a = initAdapterWithGormInstance(t, db)
 	testFilteredPolicy(t, a)
@@ -459,13 +456,13 @@ func TestAdapters(t *testing.T) {
 	a = initAdapterWithGormInstanceByName(t, db, "casbin_rule")
 	testFilteredPolicy(t, a)
 
-	db, err = gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable dbname=casbin"), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
-	a = initAdapterWithGormInstanceByName(t, db, "casbin_rule")
-	testAutoSave(t, a)
-	testSaveLoad(t, a)
+	//db, err = gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable dbname=casbin"), &gorm.Config{})
+	//if err != nil {
+	//	panic(err)
+	//}
+	//a = initAdapterWithGormInstanceByName(t, db, "casbin_rule")
+	//testAutoSave(t, a)
+	//testSaveLoad(t, a)
 
 	a = initAdapterWithGormInstanceByName(t, db, "casbin_rule")
 	testFilteredPolicy(t, a)
