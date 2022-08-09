@@ -12,10 +12,10 @@ require (
 	github.com/stretchr/testify v1.7.1
 	golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 // indirect
 	golang.org/x/sys v0.0.0-20220412211240-33da011f77ad // indirect
-	gorm.io/driver/mysql v1.3.3
+	gorm.io/driver/mysql v1.3.5
 	gorm.io/driver/postgres v1.3.4
 	gorm.io/driver/sqlserver v1.3.2
-	gorm.io/gorm v1.23.4
-	gorm.io/plugin/dbresolver v1.1.0
+	gorm.io/gorm v1.23.8
+	gorm.io/plugin/dbresolver v1.2.2
 	modernc.org/libc v1.15.1 // indirect
 )
