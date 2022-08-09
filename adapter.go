@@ -387,7 +387,7 @@ func (a *Adapter) dropTable() error {
 }
 
 func (a *Adapter) truncateTable() error {
-	if a.db.Config.Name() == sqlite.DriverName {
+	if a.driverName == "sqlite3" {
 		return a.db.Exec(fmt.Sprintf("delete from %s", a.getFullTableName())).Error
 	}
 	return a.db.Exec(fmt.Sprintf("truncate table %s", a.getFullTableName())).Error
