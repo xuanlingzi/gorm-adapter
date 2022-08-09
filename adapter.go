@@ -199,7 +199,7 @@ func NewAdapterByDBUseTableName(db *gorm.DB, prefix string, tableName string) (*
 
 	err := a.createTable()
 	if err != nil {
-		return nil, err
+		return a, err
 	}
 
 	return a, nil
