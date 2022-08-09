@@ -23,9 +23,9 @@ Based on [Officially Supported Databases](https://v1.gorm.io/docs/connecting_to_
 - PostgreSQL
 - SQL Server
 - Sqlite3
-> Since `` sqlite`` needs ``cgo`` support, it is only supported in branch ``sqlite`` instead of ``master``.See detail: [gorm-adapter#93](https://github.com/casbin/gorm-adapter/issues/93). If you want to use it, maybe you need to merge ``sqlite`` to ``master`` branch manually
+> gorm-adapter use ``github.com/glebarez/sqlite`` instead of gorm official sqlite driver ``gorm.io/driver/sqlite`` because the latter needs ``cgo`` support. But there is almost no difference between the two driver. If there is a difference in use, please submit an issue.
 
-You may find other 3rd-party supported DBs in Gorm website or other places.
+- other 3rd-party supported DBs in Gorm website or other places.
 
 ## Installation
 
@@ -69,7 +69,16 @@ func main() {
 	e.SavePolicy()
 }
 ```
-
+## Turn off AutoMigrate
+New an adapter will use ``AutoMigrate`` by default for create table, if you want to turn it off, please use API ``TurnOffAutoMigrate(db *gorm.DB) *gorm.DB``. See example: 
+```go
+db, err := gorm.Open(mysql.Open("root:@tcp(127.0.0.1:3306)/casbin"), &gorm.Config{})
+TurnOffAutoMigrate(db)
+// a,_ := NewAdapterByDB(...)
+// a,_ := NewAdapterByDBUseTableName(...)
+a,_ := NewAdapterByDBWithCustomTable(...)
+```
+Find out more details at [gorm-adapter#162](https://github.com/casbin/gorm-adapter/issues/162)
 ## Customize table columns example
 You can change the gorm struct tags, but the table structure must stay the same.
 ```go
